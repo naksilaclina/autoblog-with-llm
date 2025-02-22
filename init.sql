@@ -12,22 +12,142 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_admin') THEN
-        CREATE ROLE app_admin;
+        CREATE ROLE app_admin LOGIN PASSWORD 'admin_password_change_me';
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_editor') THEN
-        CREATE ROLE app_editor;
+        CREATE ROLE app_editor LOGIN PASSWORD 'editor_password_change_me';
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_author') THEN
-        CREATE ROLE app_author;
+        CREATE ROLE app_author LOGIN PASSWORD 'author_password_change_me';
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_readonly') THEN
-        CREATE ROLE app_readonly;
+        CREATE ROLE app_readonly LOGIN PASSWORD 'readonly_password_change_me';
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_analytics') THEN
-        CREATE ROLE app_analytics;
+        CREATE ROLE app_analytics LOGIN PASSWORD 'analytics_password_change_me';
     END IF;
 END
 $$;
+
+-- Row Level Security (RLS) etkinleştir
+ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE content.posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE content.categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE content.media ENABLE ROW LEVEL SECURITY;
+ALTER TABLE analytics.page_views ENABLE ROW LEVEL SECURITY;
+ALTER TABLE analytics.content_performance ENABLE ROW LEVEL SECURITY;
+
+-- RLS Politikaları
+-- Users tablosu için
+CREATE POLICY users_isolation_policy ON auth.users
+    USING (role = current_user OR current_user = 'app_admin');
+
+-- Posts tablosu için
+CREATE POLICY posts_view_policy ON content.posts
+    FOR SELECT
+    USING (status = 'published' OR author_id = auth.get_user_id() OR current_user = 'app_admin');
+
+CREATE POLICY posts_modify_policy ON content.posts
+    FOR ALL
+    USING (author_id = auth.get_user_id() OR current_user = 'app_admin');
+
+-- Media tablosu için
+CREATE POLICY media_view_policy ON content.media
+    FOR SELECT
+    USING (true);
+
+CREATE POLICY media_modify_policy ON content.media
+    FOR ALL
+    USING (uploaded_by = auth.get_user_id() OR current_user = 'app_admin');
+
+-- Analytics için
+CREATE POLICY analytics_view_policy ON analytics.content_performance
+    FOR SELECT
+    USING (current_user = 'app_admin' OR current_user = 'app_analytics');
+
+-- Şifreleme fonksiyonları
+CREATE OR REPLACE FUNCTION auth.hash_password(password TEXT) RETURNS TEXT AS $$
+BEGIN
+    RETURN crypt(password, gen_salt('bf', 10));
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION auth.verify_password(password TEXT, hashed_password TEXT) RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN hashed_password = crypt(password, hashed_password);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Kullanıcı ID alma fonksiyonu
+CREATE OR REPLACE FUNCTION auth.get_user_id() RETURNS UUID AS $$
+BEGIN
+    RETURN (SELECT id FROM auth.users WHERE email = current_user);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Audit logging için trigger
+CREATE TABLE IF NOT EXISTS auth.audit_log (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    table_name TEXT NOT NULL,
+    action TEXT NOT NULL,
+    old_data JSONB,
+    new_data JSONB,
+    changed_by TEXT NOT NULL,
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE FUNCTION auth.audit_trigger_func() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        INSERT INTO auth.audit_log (table_name, action, old_data, changed_by)
+        VALUES (TG_TABLE_NAME, TG_OP, row_to_json(OLD), current_user);
+        RETURN OLD;
+    ELSIF TG_OP = 'UPDATE' THEN
+        INSERT INTO auth.audit_log (table_name, action, old_data, new_data, changed_by)
+        VALUES (TG_TABLE_NAME, TG_OP, row_to_json(OLD), row_to_json(NEW), current_user);
+        RETURN NEW;
+    ELSIF TG_OP = 'INSERT' THEN
+        INSERT INTO auth.audit_log (table_name, action, new_data, changed_by)
+        VALUES (TG_TABLE_NAME, TG_OP, row_to_json(NEW), current_user);
+        RETURN NEW;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Audit trigger'ları ekle
+CREATE TRIGGER audit_users_trigger
+    AFTER INSERT OR UPDATE OR DELETE ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION auth.audit_trigger_func();
+
+CREATE TRIGGER audit_posts_trigger
+    AFTER INSERT OR UPDATE OR DELETE ON content.posts
+    FOR EACH ROW EXECUTE FUNCTION auth.audit_trigger_func();
+
+-- Yetkileri ata
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
+
+GRANT USAGE ON SCHEMA auth TO app_admin;
+GRANT USAGE ON SCHEMA auth TO app_editor, app_author;
+GRANT USAGE ON SCHEMA content TO app_admin, app_editor, app_author;
+GRANT USAGE ON SCHEMA settings TO app_admin;
+GRANT USAGE ON SCHEMA analytics TO app_admin, app_analytics;
+
+-- Tablo yetkileri
+GRANT ALL ON ALL TABLES IN SCHEMA auth TO app_admin;
+GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA content TO app_editor;
+GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA content TO app_author;
+GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO app_analytics;
+
+-- Sequence yetkileri
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA auth TO app_admin;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA content TO app_editor, app_author;
+
+-- Materialized view yetkileri
+GRANT SELECT ON content.category_stats TO app_admin, app_editor;
+GRANT SELECT ON analytics.content_performance_summary TO app_admin, app_analytics;
 
 -- Tabloları oluştur
 -- Settings şeması
@@ -226,19 +346,6 @@ SELECT
 FROM analytics.content_performance cp
 JOIN content.posts p ON p.id = cp.post_id
 GROUP BY cp.post_id, p.title;
-
--- Yetkileri ata
-GRANT ALL ON SCHEMA auth TO app_admin;
-GRANT USAGE ON SCHEMA auth TO app_editor, app_author;
-GRANT USAGE ON SCHEMA content TO app_admin, app_editor, app_author;
-GRANT USAGE ON SCHEMA settings TO app_admin;
-GRANT USAGE ON SCHEMA analytics TO app_admin, app_analytics;
-
--- Tablo yetkileri
-GRANT ALL ON ALL TABLES IN SCHEMA auth TO app_admin;
-GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA content TO app_editor;
-GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA content TO app_author;
-GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO app_analytics;
 
 -- Varsayılan ayarları ekle
 INSERT INTO settings.configurations (key, value, type, description, is_public)
