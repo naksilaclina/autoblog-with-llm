@@ -52,3 +52,4 @@ coverage/
 
 # Ignore example-project directory
 /example-project/
+/docs/
