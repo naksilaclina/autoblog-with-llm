@@ -1,10 +1,10 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { AppError } from './src/utils/AppError';
-import pool from './src/config/database';
-import redisClient from './src/config/redis';
-import v1Routes from './src/routes/v1';
+import { AppError } from './utils/AppError';
+import pool from './config/database';
+import redisClient from './config/redis';
+import v1Routes from './routes/v1';
 
 dotenv.config();
 
@@ -51,4 +51,4 @@ const startServer = async () => {
   }
 };
 
-startServer();
+startServer(); 

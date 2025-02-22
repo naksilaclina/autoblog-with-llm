@@ -1,16 +1,18 @@
+version: '3.8'
+
 services:
   client:
     build:
       context: ./client
       dockerfile: Dockerfile.dev
+    container_name: autoblog-client
     ports:
       - "3000:3000"
     volumes:
       - ./client:/app
       - /app/node_modules
     environment:
-      - NODE_ENV=development
-      - NEXT_PUBLIC_API_URL=http://server:5000
+      - NEXT_PUBLIC_API_URL=http://localhost:5000
     depends_on:
       - server
     networks:
@@ -20,6 +22,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile.dev
+    container_name: autoblog-server
     ports:
       - "5000:5000"
     volumes:
@@ -27,10 +30,22 @@ services:
       - /app/node_modules
     environment:
       - NODE_ENV=development
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/autoblog
-      - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=your_jwt_secret_here
-      - COOKIE_SECRET=your_cookie_secret_here
+      - PORT=5000
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=autoblog
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=your-secret-key
+      - JWT_EXPIRES_IN=1d
+      - JWT_REFRESH_EXPIRES_IN=7d
+      - RECAPTCHA_SECRET_KEY=your-recaptcha-secret-key
+      - CDN_URL=http://localhost:5000
+      - CACHE_TTL=60
+      - QUEUE_PREFIX=autoblog
+      - PUBLISHING_CRON_TIME=10
     depends_on:
       db:
         condition: service_healthy
@@ -38,27 +53,53 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    restart: unless-stopped
 
   db:
-    extends:
-      file: docker-compose.yml
-      service: db
+    image: postgres:15-alpine
+    container_name: autoblog-db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=autoblog
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
 
   redis:
-    extends:
-      file: docker-compose.yml
-      service: redis
-
-  bull-board:
-    extends:
-      file: docker-compose.yml
-      service: bull-board
+    image: redis:alpine
+    container_name: autoblog-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
 
   pgadmin:
-    extends:
-      file: docker-compose.yml
-      service: pgadmin
+    image: dpage/pgadmin4
+    container_name: autoblog-pgadmin
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    depends_on:
+      - db
+    networks:
+      - app-network
 
 networks:
   app-network:
@@ -66,8 +107,6 @@ networks:
 
 volumes:
   postgres_data:
-    driver: local
   redis_data:
-    driver: local
   pgadmin_data:
     driver: local 
