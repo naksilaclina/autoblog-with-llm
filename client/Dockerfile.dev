@@ -1,0 +1,21 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Bağımlılıkları kopyala ve yükle
+COPY package*.json ./
+RUN npm install
+
+# Sağlık kontrolü için wget yükle
+RUN apk add --no-cache wget
+
+# Port ve sağlık kontrolü
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD wget -qO- http://localhost:3000/api/health || exit 1
+
+# Geliştirme ortamı için environment değişkeni
+ENV NODE_ENV=development
+
+# Uygulamayı başlat
+CMD ["npm", "run", "dev"] 
