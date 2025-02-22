@@ -1,0 +1,15 @@
+{
+  "name": "autoblog-with-llm",
+  "version": "0.0.1",
+  "description": "Autoblog with LLM",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naksilaclina/autoblog-with-llm.git"
+  },
+  "author": "Anıl ÇALIŞKAN",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/naksilaclina/autoblog-with-llm/issues"
+  },
+  "homepage": "https://github.com/naksilaclina/autoblog-with-llm#readme"
+}
