@@ -1,0 +1,5 @@
+[33mcommit 0b14515ff679c8cefb9611f58396ab34b1174a26[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m
+Author: Anıl Çalışkan <naksilaclina@gmail.com>
+Date:   Sun Feb 23 01:38:57 2025 +0300
+
+    add client and server basic components

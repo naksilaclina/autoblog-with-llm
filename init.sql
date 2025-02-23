@@ -29,41 +29,141 @@ BEGIN
 END
 $$;
 
--- Row Level Security (RLS) etkinleştir
-ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE content.posts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE content.categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE content.media ENABLE ROW LEVEL SECURITY;
-ALTER TABLE analytics.page_views ENABLE ROW LEVEL SECURITY;
-ALTER TABLE analytics.content_performance ENABLE ROW LEVEL SECURITY;
+-- Tabloları oluştur
+-- Settings şeması
+CREATE TABLE IF NOT EXISTS settings.configurations (
+    key VARCHAR(100) PRIMARY KEY,
+    value TEXT NOT NULL,
+    type VARCHAR(50) NOT NULL,
+    description TEXT,
+    is_public BOOLEAN DEFAULT false,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
--- RLS Politikaları
--- Users tablosu için
-CREATE POLICY users_isolation_policy ON auth.users
-    USING (role = current_user OR current_user = 'app_admin');
+CREATE TABLE IF NOT EXISTS settings.pages (
+    key VARCHAR(100) PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    meta_title VARCHAR(255),
+    meta_description TEXT,
+    is_active BOOLEAN DEFAULT true,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
--- Posts tablosu için
-CREATE POLICY posts_view_policy ON content.posts
-    FOR SELECT
-    USING (status = 'published' OR author_id = auth.get_user_id() OR current_user = 'app_admin');
+-- Auth şeması
+CREATE TABLE IF NOT EXISTS auth.users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    role VARCHAR(50) NOT NULL,
+    api_key VARCHAR(255),
+    api_usage_limit INTEGER DEFAULT 1000,
+    api_usage_count INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT true,
+    last_login TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-CREATE POLICY posts_modify_policy ON content.posts
-    FOR ALL
-    USING (author_id = auth.get_user_id() OR current_user = 'app_admin');
+CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    token VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
--- Media tablosu için
-CREATE POLICY media_view_policy ON content.media
-    FOR SELECT
-    USING (true);
+CREATE TABLE IF NOT EXISTS auth.api_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES auth.users(id),
+    endpoint VARCHAR(255) NOT NULL,
+    method VARCHAR(10) NOT NULL,
+    status_code INTEGER NOT NULL,
+    response_time INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-CREATE POLICY media_modify_policy ON content.media
-    FOR ALL
-    USING (uploaded_by = auth.get_user_id() OR current_user = 'app_admin');
+-- Content şeması
+CREATE TABLE IF NOT EXISTS content.categories (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) NOT NULL,
+    slug VARCHAR(100) UNIQUE NOT NULL,
+    description TEXT,
+    parent_id UUID REFERENCES content.categories(id),
+    meta_title VARCHAR(255),
+    meta_description TEXT,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
--- Analytics için
-CREATE POLICY analytics_view_policy ON analytics.content_performance
-    FOR SELECT
-    USING (current_user = 'app_admin' OR current_user = 'app_analytics');
+CREATE TABLE IF NOT EXISTS content.posts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    title VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
+    content TEXT NOT NULL,
+    excerpt TEXT,
+    status VARCHAR(50) NOT NULL,
+    is_ai_generated BOOLEAN DEFAULT false,
+    ai_model VARCHAR(50),
+    ai_prompt TEXT,
+    author_id UUID REFERENCES auth.users(id),
+    category_id UUID REFERENCES content.categories(id),
+    meta_title VARCHAR(255),
+    meta_description TEXT,
+    featured_image UUID,
+    scheduled_at TIMESTAMP,
+    published_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS content.tags (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(50) NOT NULL,
+    slug VARCHAR(50) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS content.post_tags (
+    post_id UUID REFERENCES content.posts(id) ON DELETE CASCADE,
+    tag_id UUID REFERENCES content.tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (post_id, tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS content.media (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    filename VARCHAR(255) NOT NULL,
+    original_name VARCHAR(255) NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    size INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    uploaded_by UUID REFERENCES auth.users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS analytics.page_views (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    page_path VARCHAR(255) NOT NULL,
+    visitor_id VARCHAR(255),
+    user_agent TEXT,
+    ip_address VARCHAR(45),
+    referrer TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS analytics.content_performance (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    content_id UUID,
+    content_type VARCHAR(50),
+    views INTEGER DEFAULT 0,
+    unique_views INTEGER DEFAULT 0,
+    avg_time_spent INTEGER DEFAULT 0,
+    bounce_rate DECIMAL(5,2) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 -- Şifreleme fonksiyonları
 CREATE OR REPLACE FUNCTION auth.hash_password(password TEXT) RETURNS TEXT AS $$
@@ -114,6 +214,42 @@ BEGIN
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Row Level Security (RLS) etkinleştir
+ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE content.posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE content.categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE content.media ENABLE ROW LEVEL SECURITY;
+ALTER TABLE analytics.page_views ENABLE ROW LEVEL SECURITY;
+ALTER TABLE analytics.content_performance ENABLE ROW LEVEL SECURITY;
+
+-- RLS Politikaları
+-- Users tablosu için
+CREATE POLICY users_isolation_policy ON auth.users
+    USING (role = current_user OR current_user = 'app_admin');
+
+-- Posts tablosu için
+CREATE POLICY posts_view_policy ON content.posts
+    FOR SELECT
+    USING (status = 'published' OR author_id = auth.get_user_id() OR current_user = 'app_admin');
+
+CREATE POLICY posts_modify_policy ON content.posts
+    FOR ALL
+    USING (author_id = auth.get_user_id() OR current_user = 'app_admin');
+
+-- Media tablosu için
+CREATE POLICY media_view_policy ON content.media
+    FOR SELECT
+    USING (true);
+
+CREATE POLICY media_modify_policy ON content.media
+    FOR ALL
+    USING (uploaded_by = auth.get_user_id() OR current_user = 'app_admin');
+
+-- Analytics için
+CREATE POLICY analytics_view_policy ON analytics.content_performance
+    FOR SELECT
+    USING (current_user = 'app_admin' OR current_user = 'app_analytics');
 
 -- Audit trigger'ları ekle
 CREATE TRIGGER audit_users_trigger
